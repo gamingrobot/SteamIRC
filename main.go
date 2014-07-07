@@ -69,46 +69,46 @@ func handleIRCConn(conn net.Conn) {
 
 		fmt.Println(line, "Connection", ConnectionStage)
 
-		if strings.HasPrefix(strings.ToUpper(line), "QUIT ") {
+		if CheckPrefix(line, "QUIT ") {
 			conn.Close()
 			return
 		}
 
-		if strings.HasPrefix(strings.ToUpper(line), "PASS ") && ConnectionStage == ConnectionNone {
+		if CheckPrefix(line, "PASS ") && ConnectionStage == ConnectionNone {
 			//Do password checking here
 			ConnectionStage = ConnectionAuthed
 		}
 
-		if strings.HasPrefix(strings.ToUpper(line), "NICK ") && ConnectionStage == ConnectionAuthed {
+		if CheckPrefix(line, "NICK ") && ConnectionStage == ConnectionAuthed {
 			//Check to make sure ircusername matches steam username
 			IRCUsername = strings.Split(line, " ")[1]
 			conn.Write(GetWelcomePackets(IRCUsername, hostname))
-		} else if strings.HasPrefix(line, "NICK ") && ConnectionStage == ConnectionNone {
+		} else if CheckPrefix(line, "NICK ") && ConnectionStage == ConnectionNone {
 			IRCUsername = strings.Split(line, " ")[1]
 			conn.Write(GetWelcomePackets(IRCUsername, hostname))
 			conn.Write(GenerateIRCPrivateMessage("Please login use the PASS: steampassword", IRCUsername, "SYS"))			
 		}
 
-		if strings.HasPrefix(strings.ToUpper(line), "USER ") && ConnectionStage == ConnectionAuthed {
+		if CheckPrefix(line, "USER ") && ConnectionStage == ConnectionAuthed {
 			if IRCUsername != "" {
 				ConnectionStage = ConnectionConnected
+				go PingClient(conn)
 			}
 		}
 
-		if strings.HasPrefix(strings.ToUpper(line), "MENTION") && ConnectionStage == ConnectionConnected {
+		if CheckPrefix(line, "MENTION") && ConnectionStage == ConnectionConnected {
 		}
 
-		if strings.HasPrefix(strings.ToUpper(line), "ALL") && ConnectionStage == ConnectionConnected {
+		if CheckPrefix(line, "ALL") && ConnectionStage == ConnectionConnected {
 		}
 
-		if strings.HasPrefix(strings.ToUpper(line), "JOIN ##FRIENDS") && ConnectionStage == ConnectionConnected {
+		if CheckPrefix(line, "JOIN ##friends") && ConnectionStage == ConnectionConnected {
 			conn.Write([]byte(fmt.Sprintf(":%s!~%s@steam JOIN ##friends * :Blah\r\n", IRCUsername, IRCUsername)))
 		}
 
-		if strings.HasPrefix(strings.ToUpper(line), "MODE ##FRIENDS") && ConnectionStage == ConnectionConnected {
+		if CheckPrefix(line, "MODE ##FRIENDS") && ConnectionStage == ConnectionConnected {
 			conn.Write(GenerateIRCMessageBin(RplChannelModeIs, IRCUsername, "##friends +ns"))
 			conn.Write(GenerateIRCMessageBin(RplChannelCreated, IRCUsername, "##friends 1401629312"))
-			go PingClient(conn)
 		}
 	}
 
@@ -122,4 +122,11 @@ func PingClient(conn net.Conn) {
 		}
 		time.Sleep(time.Second * 30)
 	}
+}
+
+func CheckPrefix(line string, prefix string) bool {
+	st := strings.Split(line, " ")
+	st[0] = strings.ToUpper(st[0])
+	final := strings.Join(st, " ")
+	return strings.HasPrefix(final, prefix)
 }
