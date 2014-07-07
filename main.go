@@ -8,9 +8,14 @@ import (
 	"github.com/gamingrobot/steamgo"
 	"net"
 	"os"
-	"strconv"
 	"strings"
 	"time"
+)
+
+const (
+	ConnectionNone int = 0
+	ConnectionAuthed int = 1
+	ConnectionConnected int = 2
 )
 
 var loginDetails steamgo.LogOnDetails
@@ -45,13 +50,13 @@ func main() {
 
 // Handles incoming requests.
 func handleIRCConn(conn net.Conn) {
-	var ConnectionStage int = 0
+	var ConnectionStage int = ConnectionNone
 	var IRCUsername string
 
-	/*hostname, e := os.Hostname()
+	hostname, e := os.Hostname()
 	if e != nil {
 		hostname = "Unknown"
-	}*/
+	}
 
 	reader := bufio.NewReader(conn)
 	for {
@@ -62,43 +67,48 @@ func handleIRCConn(conn net.Conn) {
 			return
 		}
 
-		fmt.Println(line)
+		fmt.Println(line, "Connection", ConnectionStage)
 
 		if strings.HasPrefix(line, "QUIT ") {
 			conn.Close()
 			return
 		}
 
-		if strings.HasPrefix(line, "PASS ") && ConnectionStage == 0 {
-			ConnectionStage++
+		if strings.HasPrefix(line, "PASS ") && ConnectionStage == ConnectionNone {
+			//Do password checking here
+			ConnectionStage = ConnectionAuthed
 		}
 
-		// try and parse the string as a number to see what would happen
-		linen := strings.TrimSpace(string(lineb))
-		_, err = strconv.ParseInt(linen, 10, 64)
-		if err == nil && ConnectionStage == -1 {
+		if strings.HasPrefix(line, "NICK ") && ConnectionStage == ConnectionAuthed {
+			//Check to make sure ircusername matches steam username
+			IRCUsername = strings.Split(line, " ")[1]
+			conn.Write(GetWelcomePackets(IRCUsername, hostname))
+		} else if strings.HasPrefix(line, "NICK ") && ConnectionStage == ConnectionNone {
+			IRCUsername = strings.Split(line, " ")[1]
+			conn.Write(GetWelcomePackets(IRCUsername, hostname))
+			conn.Write(GenerateIRCPrivateMessage("Please login use the PASS: steampassword", IRCUsername, "SYS"))			
 		}
 
-		if strings.HasPrefix(line, "USER ") && ConnectionStage == 1 {
+		if strings.HasPrefix(line, "USER ") && ConnectionStage == ConnectionAuthed {
 			if IRCUsername != "" {
-				ConnectionStage++
+				ConnectionStage = ConnectionConnected
+				go PingClient(conn)
 			}
 		}
 
-		if strings.HasPrefix(strings.ToUpper(line), "MENTION") && ConnectionStage == 2 {
+		if strings.HasPrefix(strings.ToUpper(line), "MENTION") && ConnectionStage == ConnectionConnected {
 		}
 
-		if strings.HasPrefix(strings.ToUpper(line), "ALL") && ConnectionStage == 2 {
+		if strings.HasPrefix(strings.ToUpper(line), "ALL") && ConnectionStage == ConnectionConnected {
 		}
 
-		if strings.HasPrefix(line, "JOIN ##friends") && ConnectionStage == 2 {
-			conn.Write([]byte(fmt.Sprintf(":%s!~%s@twitter.com JOIN ##friends * :Blah\r\n", IRCUsername, IRCUsername)))
+		if strings.HasPrefix(line, "JOIN ##friends") && ConnectionStage == ConnectionConnected {
+			conn.Write([]byte(fmt.Sprintf(":%s!~%s@steam JOIN ##friends * :Blah\r\n", IRCUsername, IRCUsername)))
 		}
 
-		if strings.HasPrefix(line, "MODE ##friends") && ConnectionStage == 2 {
+		if strings.HasPrefix(line, "MODE ##friends") && ConnectionStage == ConnectionConnected {
 			conn.Write(GenerateIRCMessageBin(RplChannelModeIs, IRCUsername, "##friends +ns"))
 			conn.Write(GenerateIRCMessageBin(RplChannelCreated, IRCUsername, "##friends 1401629312"))
-			go PingClient(conn)
 		}
 	}
 
