@@ -69,17 +69,17 @@ func handleIRCConn(conn net.Conn) {
 
 		fmt.Println(line, "Connection", ConnectionStage)
 
-		if strings.HasPrefix(line, "QUIT ") {
+		if strings.HasPrefix(strings.ToUpper(line), "QUIT ") {
 			conn.Close()
 			return
 		}
 
-		if strings.HasPrefix(line, "PASS ") && ConnectionStage == ConnectionNone {
+		if strings.HasPrefix(strings.ToUpper(line), "PASS ") && ConnectionStage == ConnectionNone {
 			//Do password checking here
 			ConnectionStage = ConnectionAuthed
 		}
 
-		if strings.HasPrefix(line, "NICK ") && ConnectionStage == ConnectionAuthed {
+		if strings.HasPrefix(strings.ToUpper(line), "NICK ") && ConnectionStage == ConnectionAuthed {
 			//Check to make sure ircusername matches steam username
 			IRCUsername = strings.Split(line, " ")[1]
 			conn.Write(GetWelcomePackets(IRCUsername, hostname))
@@ -89,10 +89,9 @@ func handleIRCConn(conn net.Conn) {
 			conn.Write(GenerateIRCPrivateMessage("Please login use the PASS: steampassword", IRCUsername, "SYS"))			
 		}
 
-		if strings.HasPrefix(line, "USER ") && ConnectionStage == ConnectionAuthed {
+		if strings.HasPrefix(strings.ToUpper(line), "USER ") && ConnectionStage == ConnectionAuthed {
 			if IRCUsername != "" {
 				ConnectionStage = ConnectionConnected
-				go PingClient(conn)
 			}
 		}
 
@@ -102,13 +101,14 @@ func handleIRCConn(conn net.Conn) {
 		if strings.HasPrefix(strings.ToUpper(line), "ALL") && ConnectionStage == ConnectionConnected {
 		}
 
-		if strings.HasPrefix(line, "JOIN ##friends") && ConnectionStage == ConnectionConnected {
+		if strings.HasPrefix(strings.ToUpper(line), "JOIN ##FRIENDS") && ConnectionStage == ConnectionConnected {
 			conn.Write([]byte(fmt.Sprintf(":%s!~%s@steam JOIN ##friends * :Blah\r\n", IRCUsername, IRCUsername)))
 		}
 
-		if strings.HasPrefix(line, "MODE ##friends") && ConnectionStage == ConnectionConnected {
+		if strings.HasPrefix(strings.ToUpper(line), "MODE ##FRIENDS") && ConnectionStage == ConnectionConnected {
 			conn.Write(GenerateIRCMessageBin(RplChannelModeIs, IRCUsername, "##friends +ns"))
 			conn.Write(GenerateIRCMessageBin(RplChannelCreated, IRCUsername, "##friends 1401629312"))
+			go PingClient(conn)
 		}
 	}
 
