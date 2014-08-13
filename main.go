@@ -1,32 +1,53 @@
 package main
 
 import (
-	"bufio"
 	"encoding/json"
 	"flag"
 	"fmt"
-	"github.com/gamingrobot/steamgo"
+	"github.com/Philipp15b/go-steam"
+	. "github.com/Philipp15b/go-steam/internal/steamlang"
+	"log"
 	"net"
 	"os"
-	"strings"
-	"time"
+	"sync"
 )
 
-const (
-	ConnectionNone int = 0
-	ConnectionAuthed int = 1
-	ConnectionConnected int = 2
-)
+var loginDetails steam.LogOnDetails
 
-var loginDetails steamgo.LogOnDetails
+type LockingIRCConnections struct {
+	sync.RWMutex
+	byId      map[int64]*IRCConnection
+	currentId int64
+}
+
+func (c *LockingIRCConnections) deleteIRCConnection(id int64) {
+	c.Lock()
+	defer c.Unlock()
+	delete(c.byId, id)
+}
+
+func (c *LockingIRCConnections) addIRCConnection(conn *IRCConnection) int64 {
+	c.Lock()
+	defer c.Unlock()
+	c.currentId += 1
+	retid := c.currentId
+	c.byId[retid] = conn
+	return retid
+}
+
+var ircConnections *LockingIRCConnections
 
 func main() {
 	hostcfg := flag.String("listen", "localhost:6667", "<host>:<port>")
 	flag.Parse()
 	file, _ := os.Open("steamauth.cfg")
 	decoder := json.NewDecoder(file)
-	loginDetails = steamgo.LogOnDetails{}
+	loginDetails = steam.LogOnDetails{}
 	decoder.Decode(&loginDetails)
+	ircConnections = &LockingIRCConnections{
+		byId:      make(map[int64]*IRCConnection),
+		currentId: 0,
+	}
 	// Listen for incoming connections.
 	l, err := net.Listen("tcp", *hostcfg)
 	if err != nil {
@@ -36,6 +57,10 @@ func main() {
 	// Close the listener when the application closes.
 	defer l.Close()
 	fmt.Println("Listening on " + *hostcfg)
+	steamClient := steam.NewClient()
+	server := steamClient.Connect()
+	log.Println("Connecting to steam server:", server)
+	go connectToSteam(steamClient, loginDetails)
 	for {
 		// Listen for an incoming connection.
 		conn, err := l.Accept()
@@ -44,89 +69,40 @@ func main() {
 			fmt.Println("Error accepting: ", err.Error())
 		}
 		// Handle connections in a new goroutine.
-		go handleIRCConn(conn)
+		irc := &IRCConnection{Connection: conn, ConnectionState: ConnectionNone, Steam: steamClient}
+		ircConnections.addIRCConnection(irc)
+		irc.Start()
 	}
 }
 
-// Handles incoming requests.
-func handleIRCConn(conn net.Conn) {
-	var ConnectionStage int = ConnectionNone
-	var IRCUsername string
-
-	hostname, e := os.Hostname()
-	if e != nil {
-		hostname = "Unknown"
-	}
-
-	reader := bufio.NewReader(conn)
-	for {
-		lineb, _, err := reader.ReadLine()
-		line := string(lineb)
-
-		if err != nil {
-			return
+func connectToSteam(steamClient *steam.Client, login steam.LogOnDetails) {
+	for event := range steamClient.Events() {
+		switch e := event.(type) { //Events that should *not* be passed to web
+		case *steam.ConnectedEvent:
+			log.Println("Connected to steam")
+			steamClient.Auth.LogOn(login)
+		case *steam.LoggedOnEvent:
+			log.Println("Logged on steam as", login.Username)
+			steamClient.Social.SetPersonaState(EPersonaState_Online)
+		case *steam.LoggedOffEvent:
+			log.Println("Logged off steam")
+			steamClient.Auth.LogOn(login)
+		case *steam.DisconnectedEvent:
+			log.Println("Disconnected to steam")
+		case *steam.MachineAuthUpdateEvent:
+		case *steam.LoginKeyEvent:
+		case steam.FatalErrorEvent:
+			steamClient.Connect() // please do some real error handling here
+			log.Print("FatalError", e)
+		case error:
+			log.Println(e)
+		default:
+			handleSteamEvent(event)
 		}
-
-		fmt.Println(line, "Connection", ConnectionStage)
-
-		if CheckPrefix(line, "QUIT ") {
-			conn.Close()
-			return
-		}
-
-		if CheckPrefix(line, "PASS ") && ConnectionStage == ConnectionNone {
-			//Do password checking here
-			ConnectionStage = ConnectionAuthed
-		}
-
-		if CheckPrefix(line, "NICK ") && ConnectionStage == ConnectionAuthed {
-			//Check to make sure ircusername matches steam username
-			IRCUsername = strings.Split(line, " ")[1]
-			conn.Write(GetWelcomePackets(IRCUsername, hostname))
-		} else if CheckPrefix(line, "NICK ") && ConnectionStage == ConnectionNone {
-			IRCUsername = strings.Split(line, " ")[1]
-			conn.Write(GetWelcomePackets(IRCUsername, hostname))
-			conn.Write(GenerateIRCPrivateMessage("Please login use the PASS: steampassword", IRCUsername, "SYS"))			
-		}
-
-		if CheckPrefix(line, "USER ") && ConnectionStage == ConnectionAuthed {
-			if IRCUsername != "" {
-				ConnectionStage = ConnectionConnected
-				go PingClient(conn)
-			}
-		}
-
-		if CheckPrefix(line, "MENTION") && ConnectionStage == ConnectionConnected {
-		}
-
-		if CheckPrefix(line, "ALL") && ConnectionStage == ConnectionConnected {
-		}
-
-		if CheckPrefix(line, "JOIN ##friends") && ConnectionStage == ConnectionConnected {
-			conn.Write([]byte(fmt.Sprintf(":%s!~%s@steam JOIN ##friends * :Blah\r\n", IRCUsername, IRCUsername)))
-		}
-
-		if CheckPrefix(line, "MODE ##FRIENDS") && ConnectionStage == ConnectionConnected {
-			conn.Write(GenerateIRCMessageBin(RplChannelModeIs, IRCUsername, "##friends +ns"))
-			conn.Write(GenerateIRCMessageBin(RplChannelCreated, IRCUsername, "##friends 1401629312"))
-		}
-	}
-
-}
-
-func PingClient(conn net.Conn) {
-	for {
-		_, e := conn.Write([]byte(fmt.Sprintf("PING :%d\r\n", int32(time.Now().Unix()))))
-		if e != nil {
-			break
-		}
-		time.Sleep(time.Second * 30)
 	}
 }
 
-func CheckPrefix(line string, prefix string) bool {
-	st := strings.Split(line, " ")
-	st[0] = strings.ToUpper(st[0])
-	final := strings.Join(st, " ")
-	return strings.HasPrefix(final, prefix)
+func handleSteamEvent(event interface{}) {
+	switch e := event.(type) { //Events that are not part of login
+	}
 }
