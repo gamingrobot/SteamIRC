@@ -89,11 +89,12 @@ func (c *IRCConnection) Start() {
 
 func (c *IRCConnection) JoinRoom() {
 	c.Connection.Write([]byte(fmt.Sprintf(":%s!~%s@steam JOIN ##friends\r\n", c.Username, c.Username)))
+	var names []string
 	for id, friend := range c.Steam.Social.Friends.GetCopy() {
 		log.Println(id, friend.Name)
-		c.Connection.Write(GenerateIRCMessageBin(RplNamReply, c.Username, fmt.Sprintf("@ ##friends :@%s %s", c.Username, FixName(friend.Name))))
-
+		names = append(names, FixName(friend.Name))
 	}
+	c.Connection.Write(GenerateIRCMessageBin(RplNamReply, c.Username, fmt.Sprintf("@ ##friends :@%s %s", c.Username, strings.Join(names, " "))))
 	c.Connection.Write(GenerateIRCMessageBin(RplEndOfNames, c.Username, "##friends :End of /NAMES list."))
 	c.ConnectionState = ConnectionInRoom
 }
