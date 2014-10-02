@@ -80,7 +80,7 @@ func connectToSteam(steamClient *steam.Client, login steam.LogOnDetails) {
 		switch e := event.(type) { //Events that should *not* be passed to web
 		case *steam.ConnectedEvent:
 			log.Println("Connected to steam")
-			steamClient.Auth.LogOn(login)
+			steamClient.Auth.LogOn(&login)
 		case *steam.LoggedOnEvent:
 			log.Println("Logged on steam as", login.Username)
 			steamClient.Social.SetPersonaState(EPersonaState_Online)
